@@ -23,9 +23,27 @@ class ProofbriefStack(Stack):
         dev_mode = self.node.try_get_context("dev_mode")
 
         # --- 1. Network Foundation (VPC) ---
+        # Explicitly define all three subnet types to ensure they are available.
         vpc = ec2.Vpc(self, "ProofBriefVPC",
             max_azs=2,
-            nat_gateways=1
+            nat_gateways=1,
+            subnet_configuration=[
+                ec2.SubnetConfiguration(
+                    name="Public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=24
+                ),
+                ec2.SubnetConfiguration(
+                    name="Private",
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                    cidr_mask=24
+                ),
+                ec2.SubnetConfiguration(
+                    name="Isolated",
+                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
+                    cidr_mask=24
+                )
+            ]
         )
 
         # --- 2. Core Storage & Queuing ---
@@ -33,49 +51,36 @@ class ProofbriefStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
-            versioned=True # Best practice for data protection
+            versioned=True
         )
 
-        # Create the Dead-Letter Queue to catch failed messages.
         dlq = sqs.Queue(self, "JobDLQ")
-
-        # Configure the main job queue to use the DLQ.
         job_queue = sqs.Queue(self, "JobQueue",
             dead_letter_queue=sqs.DeadLetterQueue(
-                max_receive_count=3, # Tries a message 3 times before sending to DLQ
+                max_receive_count=3,
                 queue=dlq
             )
         )
 
         # --- 3. Security Groups ---
-        lambda_sg = ec2.SecurityGroup(self, "LambdaSecurityGroup",
-            vpc=vpc,
-            description="Security group for the ProofBrief Lambda functions"
-        )
-
-        db_sg = ec2.SecurityGroup(self, "DatabaseSecurityGroup",
-            vpc=vpc,
-            description="Security group for the Aurora database"
-        )
-
+        lambda_sg = ec2.SecurityGroup(self, "LambdaSecurityGroup", vpc=vpc)
+        db_sg = ec2.SecurityGroup(self, "DatabaseSecurityGroup", vpc=vpc)
+        
         db_sg.add_ingress_rule(
             peer=lambda_sg,
             connection=ec2.Port.tcp(5432),
             description="Allow inbound connections from Lambdas"
         )
 
-        # If dev_mode is true, add a rule for your local IP address.
         if dev_mode:
-            # IMPORTANT: This rule is only for development!
-            # Replace YOUR_IP_ADDRESS with your actual public IP.
+            # IMPORTANT: Replace with your actual public IP for development.
             db_sg.add_ingress_rule(
-                peer=ec2.Peer.ipv4("47.184.59.40/32"),
+                peer=ec2.Peer.ipv4("YOUR_IP_ADDRESS/32"),
                 connection=ec2.Port.tcp(5432),
                 description="Allow local machine access for migrations"
             )
 
         # --- 4. Database (Aurora Serverless v2) ---
-        # Conditionally select the subnet type based on dev_mode.
         db_subnet_type = ec2.SubnetType.PUBLIC if dev_mode else ec2.SubnetType.PRIVATE_ISOLATED
 
         db_cluster = rds.DatabaseCluster(self, "Database",
