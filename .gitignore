@@ -1,2 +1,25 @@
 /.venv
 /.env
+
+# CDK specific ignores
+/infra/cdk.out/
+/infra/cdk.context.json
+/infra/__pycache__/
+/infra/.env
+
+# Python cache files
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
