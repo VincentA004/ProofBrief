@@ -12,37 +12,17 @@ from aws_cdk import (
 from constructs import Construct
 
 class ProofbriefStack(Stack):
-    """
-    This stack provisions the foundational infrastructure for the ProofBrief application.
-    It includes a 'dev_mode' context flag in cdk.json for developer access.
-    """
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # --- Read the dev_mode flag from cdk.json ---
-        dev_mode = self.node.try_get_context("dev_mode")
-
         # --- 1. Network Foundation (VPC) ---
-        # Explicitly define all three subnet types to ensure they are available.
         vpc = ec2.Vpc(self, "ProofBriefVPC",
             max_azs=2,
             nat_gateways=1,
             subnet_configuration=[
-                ec2.SubnetConfiguration(
-                    name="Public",
-                    subnet_type=ec2.SubnetType.PUBLIC,
-                    cidr_mask=24
-                ),
-                ec2.SubnetConfiguration(
-                    name="Private",
-                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                    cidr_mask=24
-                ),
-                ec2.SubnetConfiguration(
-                    name="Isolated",
-                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
-                    cidr_mask=24
-                )
+                ec2.SubnetConfiguration(name="Public", subnet_type=ec2.SubnetType.PUBLIC),
+                ec2.SubnetConfiguration(name="Private", subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+                ec2.SubnetConfiguration(name="Isolated", subnet_type=ec2.SubnetType.PRIVATE_ISOLATED)
             ]
         )
 
@@ -53,52 +33,38 @@ class ProofbriefStack(Stack):
             enforce_ssl=True,
             versioned=True
         )
-
+        
         dlq = sqs.Queue(self, "JobDLQ")
         job_queue = sqs.Queue(self, "JobQueue",
-            dead_letter_queue=sqs.DeadLetterQueue(
-                max_receive_count=3,
-                queue=dlq
-            )
+            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=dlq)
         )
 
         # --- 3. Security Groups ---
+        # This SG is for the application Lambdas we will create later
         lambda_sg = ec2.SecurityGroup(self, "LambdaSecurityGroup", vpc=vpc)
         db_sg = ec2.SecurityGroup(self, "DatabaseSecurityGroup", vpc=vpc)
-        
-        db_sg.add_ingress_rule(
-            peer=lambda_sg,
-            connection=ec2.Port.tcp(5432),
-            description="Allow inbound connections from Lambdas"
-        )
-
-        if dev_mode:
-            # IMPORTANT: Replace with your actual public IP for development.
-            db_sg.add_ingress_rule(
-                peer=ec2.Peer.ipv4("YOUR_IP_ADDRESS/32"),
-                connection=ec2.Port.tcp(5432),
-                description="Allow local machine access for migrations"
-            )
+        db_sg.add_ingress_rule(peer=lambda_sg, connection=ec2.Port.tcp(5432))
 
         # --- 4. Database (Aurora Serverless v2) ---
-        db_subnet_type = ec2.SubnetType.PUBLIC if dev_mode else ec2.SubnetType.PRIVATE_ISOLATED
-
         db_cluster = rds.DatabaseCluster(self, "Database",
             engine=rds.DatabaseClusterEngine.aurora_postgres(
                 version=rds.AuroraPostgresEngineVersion.VER_15_3
             ),
             writer=rds.ClusterInstance.serverless_v2("writer"),
             vpc=vpc,
+            serverless_v2_min_capacity=0.5,
             vpc_subnets=ec2.SubnetSelection(
-                subnet_type=db_subnet_type
+                subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
             ),
             security_groups=[db_sg],
-            credentials=rds.Credentials.from_generated_secret("proofbriefadmin")
+            credentials=rds.Credentials.from_generated_secret("proofbriefadmin"),
+            
+            # This is the ONLY line needed to enable the migration "API"
+            enable_data_api=True
         )
 
         # --- Stack Outputs ---
         CfnOutput(self, "S3BucketName", value=proof_brief_bucket.bucket_name)
         CfnOutput(self, "SQSQueueUrl", value=job_queue.queue_url)
-        CfnOutput(self, "DeadLetterQueueUrl", value=dlq.queue_url)
+        CfnOutput(self, "DatabaseClusterARN", value=db_cluster.cluster_arn)
         CfnOutput(self, "DatabaseSecretARN", value=db_cluster.secret.secret_arn)
-        CfnOutput(self, "LambdaSecurityGroupID", value=lambda_sg.security_group_id)
