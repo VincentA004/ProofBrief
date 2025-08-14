@@ -21,6 +21,16 @@ from alembic import context
 # Load environment variables from a .env file at the project root
 load_dotenv()
 
+# right after load_dotenv()
+cluster_arn = os.getenv("DB_CLUSTER_ARN", "")
+if cluster_arn:
+    parts = cluster_arn.split(":")
+    if len(parts) > 3:
+        arn_region = parts[3]
+        os.environ["AWS_REGION"] = arn_region
+        os.environ["AWS_DEFAULT_REGION"] = arn_region
+
+
 # Add the parent directory (e.g., /backend) to the Python path
 # This allows Alembic to find the 'models' module.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
