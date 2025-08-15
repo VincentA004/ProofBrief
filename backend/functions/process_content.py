@@ -3,13 +3,13 @@
 import json
 import math
 import time
+import uuid
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-# Shared utilities
 from shared.utils import (
     get_db_engine,
     get_secret,
@@ -18,7 +18,6 @@ from shared.utils import (
     log,
     SESSION,
 )
-
 
 # --- GitHub scraping ---
 
@@ -34,7 +33,6 @@ def _req_with_retries(session: requests.Session, url: str, headers: dict, *, ret
     for attempt in range(retries):
         try:
             resp = session.get(url, headers=headers, timeout=timeout)
-            # handle rate limit
             if resp.status_code == 403 and "rate limit" in (resp.text or "").lower():
                 reset = resp.headers.get("X-RateLimit-Reset")
                 wait_s = max(1, int(reset) - int(time.time())) if reset else math.ceil(backoff)
@@ -43,14 +41,13 @@ def _req_with_retries(session: requests.Session, url: str, headers: dict, *, ret
                 continue
             resp.raise_for_status()
             return resp
-        except requests.RequestException as e:
+        except requests.RequestException:
             if attempt == retries - 1:
                 raise
             time.sleep(backoff)
             backoff *= 2
 
 def scrape_github_profile(username_or_url: str, api_token: str, *, max_repos=10) -> list[dict]:
-    """Scrape public repos with simple retries and cap."""
     username = _username_from_url(username_or_url)
     if not username:
         return []
@@ -85,11 +82,9 @@ def scrape_github_profile(username_or_url: str, api_token: str, *, max_repos=10)
     log.info("GitHub scrape collected %d artifacts", len(artifacts))
     return artifacts
 
-
 # --- JD → skills via Bedrock ---
 
 def extract_skills_from_jd(jd_text: str) -> dict:
-    """Use a small Bedrock model; enforce strict JSON with fallback."""
     log.info("Extracting skills from JD via Bedrock…")
     br = SESSION.client("bedrock-runtime")
     prompt = (
@@ -113,14 +108,12 @@ def extract_skills_from_jd(jd_text: str) -> dict:
             accept="application/json",
         )
         payload = json.loads(resp["body"].read())
-        text = (payload.get("content", [{}])[0] or {}).get("text", "")
-        # strip possible code fences
-        text = text.strip()
-        if text.startswith("```"):
+        text_out = (payload.get("content", [{}])[0] or {}).get("text", "")
+        text_out = text_out.strip()
+        if text_out.startswith("```"):
             import re as _re
-            text = _re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=_re.IGNORECASE | _re.MULTILINE)
-        data = json.loads(text)
-        # normalize dict[str, list[str]]
+            text_out = _re.sub(r"^```(?:json)?\s*|\s*```$", "", text_out, flags=_re.IGNORECASE | _re.MULTILINE)
+        data = json.loads(text_out)
         norm = {
             str(skill).strip(): [str(x).strip() for x in (kw_list or []) if str(x).strip()]
             for skill, kw_list in data.items()
@@ -136,44 +129,47 @@ def extract_skills_from_jd(jd_text: str) -> dict:
             "Data": ["sql", "postgres", "snowflake", "spark", "etl"],
         }
 
-
 # --- Heuristics ---
 
 def calculate_heuristics(resume_text: str, artifacts: list, skill_map: dict) -> dict:
-    """Simple keyword-density heuristic over resume text + artifact titles."""
     log.info("Calculating heuristics…")
     scores = {skill: 0 for skill in skill_map.keys()}
     corpus = (resume_text or "").lower()
     for a in artifacts or []:
         if a.get("title"):
             corpus += " " + a["title"].lower()
-
     for skill, keywords in skill_map.items():
         for kw in keywords:
             if kw:
                 scores[skill] += corpus.count(kw.lower())
-
     return {"skill_counts": scores}
 
+# --- DB insert ---
 
 def insert_artifacts(engine: Engine, brief_id: str, artifacts: list[dict]) -> None:
     """Save scraped artifacts to DB (single transaction)."""
     if not artifacts:
         return
     log.info("Inserting %d artifacts for brief %s", len(artifacts), brief_id)
+
+    sql = text("""
+        INSERT INTO artifacts (id, candidate_id, type, url, title, status, created_at)
+        SELECT CAST(:id AS uuid), b.candidate_id, :type, :url, :title, :status, NOW()
+        FROM briefs b
+        WHERE b.id = CAST(:brief_id AS uuid)
+    """)
+
     with engine.begin() as conn:
         for art in artifacts:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO artifacts (candidate_id, type, url, title, status)
-                    SELECT b.candidate_id, :type, :url, :title, :status
-                    FROM briefs b WHERE b.id = :brief_id
-                    """
-                ),
-                {**art, "brief_id": brief_id},
-            )
-
+            params = {
+                "id": str(uuid.uuid4()),
+                "type": art.get("type"),
+                "url": art.get("url"),
+                "title": art.get("title"),
+                "status": art.get("status"),
+                "brief_id": brief_id,
+            }
+            conn.execute(sql, params)
 
 # --- AWS Lambda Handler ---
 
@@ -199,7 +195,7 @@ def handler(event, context):
                 FROM briefs b
                 JOIN candidates c ON b.candidate_id = c.id
                 JOIN jobs j       ON b.job_id       = j.id
-                WHERE b.id = :brief_id
+                WHERE b.id = CAST(:brief_id AS uuid)
             """),
             {"brief_id": brief_id},
         ).fetchone()
@@ -228,7 +224,6 @@ def handler(event, context):
     insert_artifacts(engine, brief_id, artifacts)
     heuristic_scores = calculate_heuristics(resume_text, artifacts, skill_map)
 
-    # Prefer returning pointers (Step Functions payload safety)
     return {
         "briefId": brief_id,
         "resumeTextS3": {"bucket": bucket, "key": processed_resume_key},

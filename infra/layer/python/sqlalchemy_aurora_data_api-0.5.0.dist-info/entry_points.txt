@@ -1,0 +1,3 @@
+[sqlalchemy.dialects]
+mysql.auroradataapi = sqlalchemy_aurora_data_api:AuroraMySQLDataAPIDialect
+postgresql.auroradataapi = sqlalchemy_aurora_data_api:AuroraPostgresDataAPIDialect

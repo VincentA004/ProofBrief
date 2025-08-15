@@ -76,82 +76,107 @@ class ProofbriefStack(Stack):
             enable_data_api=True,
         )
 
-        # --- 5. Lambda common config ---
+            # --- 5. Lambda common config ---
         lambda_env = {
-            # NOTE: Do not set AWS_REGION/AWS_DEFAULT_REGION here (reserved by Lambda runtime)
             "S3_BUCKET_NAME": bucket.bucket_name,
             "DB_CLUSTER_ARN": db_cluster.cluster_arn,
             "DB_SECRET_ARN": db_cluster.secret.secret_arn,
             "DB_NAME": os.environ.get("DB_NAME", "postgres"),
-            # Optional: model id for Bedrock (used by process/resume lambdas)
             "BEDROCK_MODEL_ID": os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"),
-            # Optional: GitHub token secret (if you created one)
             "GITHUB_SECRET_ARN": os.environ.get("GITHUB_SECRET_ARN", ""),
         }
 
+        # Shared layer with third-party deps (install into ./layer/python; see steps below)
+        deps_layer = _lambda.LayerVersion(
+            self, "DepsLayer",
+            code=_lambda.Code.from_asset("layer"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            description="Shared third-party Python deps for Proofbrief Lambdas",
+        )
+
         common_kwargs = dict(
-            entry="../backend",   # bundle the whole backend folder (contains functions/shared/requirements)
+            entry="../backend",            # bundles backend/ (functions/, shared/)
             runtime=_lambda.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(60),
             memory_size=1024,
             environment=lambda_env,
+            layers=[deps_layer],
         )
 
         # --- 6. Lambdas ---
         parse_lambda = lambda_python.PythonFunction(
-            self, "ParseResumeFn", index="functions/parse_resume.py", **common_kwargs
+            self, "ParseResumeFn",
+            index="functions/parse_resume.py",
+            **common_kwargs,
         )
         process_lambda = lambda_python.PythonFunction(
-            self, "ProcessContentFn", index="functions/process_content.py", **common_kwargs
+            self, "ProcessContentFn",
+            index="functions/process_content.py",
+            **common_kwargs,
         )
         resume_lambda = lambda_python.PythonFunction(
-            self, "ResumeAgentFn", index="functions/resume_agent.py", **common_kwargs
+            self, "ResumeAgentFn",
+            index="functions/resume_agent.py",
+            **common_kwargs,
         )
         save_output_lambda = lambda_python.PythonFunction(
-            self, "SaveOutputFn", index="functions/save_output.py", **common_kwargs
+            self, "SaveOutputFn",
+            index="functions/save_output.py",
+            **common_kwargs,
         )
 
-        # --- 7. Permissions for Data API + Secrets + S3 ---
+        # --- 7. Permissions for Data API + Secrets + S3 + external services ---
         for fn in [parse_lambda, process_lambda, resume_lambda, save_output_lambda]:
             # Aurora Data API
-            fn.add_to_role_policy(
-                iam.PolicyStatement(
-                    actions=[
-                        "rds-data:ExecuteStatement",
-                        "rds-data:BatchExecuteStatement",
-                        "rds-data:BeginTransaction",
-                        "rds-data:CommitTransaction",
-                        "rds-data:RollbackTransaction",
-                    ],
-                    resources=[db_cluster.cluster_arn],
-                )
-            )
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=[
+                    "rds-data:ExecuteStatement",
+                    "rds-data:BatchExecuteStatement",
+                    "rds-data:BeginTransaction",
+                    "rds-data:CommitTransaction",
+                    "rds-data:RollbackTransaction",
+                ],
+                resources=[db_cluster.cluster_arn],
+            ))
             # Read DB credentials
-            fn.add_to_role_policy(
-                iam.PolicyStatement(
-                    actions=["secretsmanager:GetSecretValue"],
-                    resources=[db_cluster.secret.secret_arn],
-                )
-            )
-            # S3 read/write (SaveOutput needs PutObject; others read/write processed artifacts)
-            fn.add_to_role_policy(
-                iam.PolicyStatement(
-                    actions=[
-                        "s3:GetObject",
-                        "s3:PutObject",
-                        "s3:ListBucket",
-                    ],
-                    resources=[bucket.bucket_arn, f"{bucket.bucket_arn}/*"],
-                )
-            )
-            # (Optional) GitHub secret access if configured
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[db_cluster.secret.secret_arn],
+            ))
+            # S3 list/get/put inside the stack bucket
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[bucket.bucket_arn],
+            ))
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject", "s3:HeadObject"],
+                resources=[f"{bucket.bucket_arn}/*"],
+            ))
+            # Optional GitHub token secret (if provided via env)
             if lambda_env["GITHUB_SECRET_ARN"]:
-                fn.add_to_role_policy(
-                    iam.PolicyStatement(
-                        actions=["secretsmanager:GetSecretValue"],
-                        resources=[lambda_env["GITHUB_SECRET_ARN"]],
-                    )
-                )
+                fn.add_to_role_policy(iam.PolicyStatement(
+                    actions=["secretsmanager:GetSecretValue"],
+                    resources=[lambda_env["GITHUB_SECRET_ARN"]],
+                ))
+
+        # Extra service-specific perms
+        # Textract (parse_resume)
+        parse_lambda.add_to_role_policy(iam.PolicyStatement(
+            actions=["textract:StartDocumentTextDetection", "textract:GetDocumentTextDetection"],
+            resources=["*"],  # Textract doesn’t support resource-level perms for these; scope by condition if desired
+        ))
+        parse_lambda.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetBucketLocation"],
+            resources=[bucket.bucket_arn],
+        ))
+
+        # Bedrock (process_content: skill extraction; resume_agent: final brief)
+        for fn in [process_lambda, resume_lambda]:
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                resources=["*"],  # Bedrock model ARNs vary by region/account; widen then tighten later if you like
+            ))
+
 
         # --- 8. Step Functions: parse -> process -> resume -> save_output ---
         parse_task = tasks.LambdaInvoke(

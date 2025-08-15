@@ -61,6 +61,22 @@ def make_processed_keys(src_key: str) -> tuple[str, str]:
     return str(parent / txt_name), str(parent / json_name)
 
 
+def _clean_github_profile(url: str) -> str | None:
+    """
+    Normalize a GitHub profile URL.
+    Returns canonical 'https://github.com/<username>' or None if not a profile link.
+    """
+    if not isinstance(url, str) or "github.com" not in url:
+        return None
+    # Trim common trailing OCR/annotation junk
+    url = re.sub(r'[)\]\s>]+$', "", url.strip())
+    m = re.match(r'https?://(?:www\.)?github\.com/([A-Za-z0-9-]+)(?:/|$)', url)
+    if not m:
+        return None
+    username = m.group(1)
+    return f"https://github.com/{username}"
+
+
 # --- Core Logic ---
 
 def process_resume(s3_bucket: str, s3_key: str) -> dict:
@@ -80,35 +96,49 @@ def process_resume(s3_bucket: str, s3_key: str) -> dict:
 
     # Wait for completion
     status = "IN_PROGRESS"
+    job_result = {}
     while status not in ("SUCCEEDED", "FAILED"):
         time.sleep(5)
         job_result = textract.get_document_text_detection(JobId=job_id)
-        status = job_result["JobStatus"]
+        status = job_result.get("JobStatus", "IN_PROGRESS")
         log.info(f"Textract job {job_id} status: {status}")
 
     if status == "FAILED":
         raise RuntimeError(f"Textract job {job_id} failed")
 
     # Gather all blocks (pagination)
-    blocks = job_result.get("Blocks", [])
+    blocks = job_result.get("Blocks", []) or []
     next_token = job_result.get("NextToken")
     while next_token:
         page_res = textract.get_document_text_detection(JobId=job_id, NextToken=next_token)
-        blocks.extend(page_res.get("Blocks", []))
+        blocks.extend(page_res.get("Blocks", []) or [])
         next_token = page_res.get("NextToken")
 
-    # Build OCR text
-    full_text = "\n".join(b["Text"] for b in blocks if b.get("BlockType") == "LINE")
+    # Build OCR text (be defensive)
+    full_text_lines = [b.get("Text", "") for b in blocks if b.get("BlockType") == "LINE" and b.get("Text")]
+    full_text = "\n".join(full_text_lines)
 
     # Extract URLs: OCR-visible + true PDF link targets
-    ocr_urls = re.findall(r'https?://[^\s)>\]]+', full_text)
+    ocr_urls = re.findall(r'https?://[^\s)>\]]+', full_text) if full_text else []
     true_link_targets = extract_pdf_hyperlinks_from_s3(s3_client, s3_bucket, s3_key)
-    all_urls = list({*true_link_targets, *ocr_urls})
-    github_url = next((u for u in all_urls if "github.com" in u), None)
+
+    # Prefer true PDF annotation targets; fallback to OCR text
+    github_url = None
+    for u in true_link_targets:
+        cleaned = _clean_github_profile(u)
+        if cleaned:
+            github_url = cleaned
+            break
+    if not github_url:
+        for u in ocr_urls:
+            cleaned = _clean_github_profile(u)
+            if cleaned:
+                github_url = cleaned
+                break
 
     # Save processed artifacts to S3
     processed_txt_key, textract_json_key = make_processed_keys(s3_key)
-    s3_client.put_object(Bucket=s3_bucket, Key=processed_txt_key, Body=full_text.encode("utf-8"))
+    s3_client.put_object(Bucket=s3_bucket, Key=processed_txt_key, Body=(full_text or "").encode("utf-8"))
     s3_client.put_object(Bucket=s3_bucket, Key=textract_json_key, Body=json.dumps({"Blocks": blocks}, indent=2).encode("utf-8"))
     log.info(f"Saved processed text to s3://{s3_bucket}/{processed_txt_key}")
     log.info(f"Saved Textract JSON to s3://{s3_bucket}/{textract_json_key}")
@@ -133,7 +163,12 @@ def handler(event, context):
     # Fetch resume S3 key
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT c.s3_resume_path FROM candidates c JOIN briefs b ON c.id = b.candidate_id WHERE b.id = :brief_id"),
+            text("""
+                SELECT c.s3_resume_path
+                FROM candidates c
+                JOIN briefs b ON c.id = b.candidate_id
+                WHERE b.id = CAST(:brief_id AS uuid)
+            """),
             {"brief_id": brief_id},
         ).fetchone()
 
@@ -153,7 +188,8 @@ def handler(event, context):
                 UPDATE candidates AS c
                 SET s3_processed_resume_path = :path, updated_at = NOW()
                 FROM briefs b
-                WHERE b.candidate_id = c.id AND b.id = :brief_id
+                WHERE b.candidate_id = c.id
+                  AND b.id = CAST(:brief_id AS uuid)
                 """
             ),
             {"path": result["processedResumeTextKey"], "brief_id": brief_id},
