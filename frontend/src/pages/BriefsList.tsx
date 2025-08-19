@@ -1,3 +1,5 @@
+// frontend/components/BriefsList.tsx
+
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -6,8 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, RefreshCw } from 'lucide-react';
-import { listBriefs } from '@/api';
+import { Plus, RefreshCw, Trash2, Loader2 } from 'lucide-react';
+import { listBriefs, deleteBrief } from '@/api';
 import type { BriefListItem } from '@/types';
 
 export default function BriefsList() {
@@ -15,6 +17,7 @@ export default function BriefsList() {
   const [briefs, setBriefs] = useState<BriefListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchBriefs = async (showRefreshing = false) => {
     try {
@@ -24,9 +27,9 @@ export default function BriefsList() {
     } catch (error) {
       console.error('Failed to fetch briefs:', error);
       toast({
-        title: "Failed to load briefs",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        variant: "destructive"
+        title: 'Failed to load briefs',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred.',
+        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);
@@ -36,6 +39,7 @@ export default function BriefsList() {
 
   useEffect(() => {
     fetchBriefs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const formatDate = (dateString?: string | null) => {
@@ -45,6 +49,29 @@ export default function BriefsList() {
 
   const getStatusVariant = (status: string) => {
     return status === 'DONE' ? 'default' : 'secondary';
+  };
+
+  const handleDelete = async (id: string) => {
+    const yes = window.confirm('Delete this brief? This cannot be undone.');
+    if (!yes) return;
+
+    try {
+      setDeletingId(id);
+      await deleteBrief(id); // uses central API client (base URL + auth)
+      setBriefs(prev => prev.filter(b => b.briefId !== id));
+      toast({ title: 'Brief deleted', description: 'The brief was removed successfully.' });
+    } catch (error) {
+      console.error('Failed to delete brief:', error);
+      const description =
+        error instanceof Error ? error.message : 'An unexpected error occurred.';
+      toast({
+        title: 'Delete failed',
+        description,
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (isLoading) {
@@ -60,7 +87,10 @@ export default function BriefsList() {
         <Card className="shadow-modern backdrop-blur-sm bg-card/50">
           <CardContent className="p-6">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex justify-between items-center py-6 border-b last:border-b-0">
+              <div
+                key={i}
+                className="flex justify-between items-center py-6 border-b last:border-b-0"
+              >
                 <div className="space-y-3">
                   <Skeleton className="h-5 w-52" />
                   <Skeleton className="h-4 w-36" />
@@ -99,7 +129,10 @@ export default function BriefsList() {
             <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button asChild className="gradient-primary hover:scale-105 transition-all duration-200 shadow-modern">
+          <Button
+            asChild
+            className="gradient-primary hover:scale-105 transition-all duration-200 shadow-modern"
+          >
             <Link to="/new">
               <Plus className="w-4 h-4 mr-2" />
               New Brief
@@ -121,7 +154,10 @@ export default function BriefsList() {
                   Create your first brief to get started with candidate analysis
                 </p>
               </div>
-              <Button asChild className="gradient-primary hover:scale-105 transition-all duration-200 shadow-modern">
+              <Button
+                asChild
+                className="gradient-primary hover:scale-105 transition-all duration-200 shadow-modern"
+              >
                 <Link to="/new">
                   <Plus className="w-4 h-4 mr-2" />
                   Create Brief
@@ -148,13 +184,17 @@ export default function BriefsList() {
                     <TableHead>Job Title</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
+                    <TableHead className="w-28 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {briefs.map((brief) => (
-                    <TableRow key={brief.briefId} className="cursor-pointer hover:bg-muted/30 transition-colors duration-200 group">
+                    <TableRow
+                      key={brief.briefId}
+                      className="hover:bg-muted/30 transition-colors duration-200 group"
+                    >
                       <TableCell>
-                        <Link 
+                        <Link
                           to={`/briefs/${brief.briefId}`}
                           className="font-medium hover:text-primary transition-colors duration-200 group-hover:underline"
                         >
@@ -170,6 +210,27 @@ export default function BriefsList() {
                       <TableCell className="text-muted-foreground">
                         {formatDate(brief.createdAt)}
                       </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDelete(brief.briefId)}
+                          disabled={deletingId === brief.briefId}
+                          className="shadow-modern"
+                        >
+                          {deletingId === brief.briefId ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Deleting…
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </>
+                          )}
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -179,24 +240,44 @@ export default function BriefsList() {
             {/* Mobile Cards */}
             <div className="md:hidden space-y-4 p-6">
               {briefs.map((brief) => (
-                <Link key={brief.briefId} to={`/briefs/${brief.briefId}`}>
-                  <Card className="hover:shadow-modern transition-all duration-300 hover:scale-[1.02] bg-card/50 backdrop-blur-sm border-primary/10 hover:border-primary/30">
-                    <CardContent className="p-5">
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-medium">{brief.candidate.name}</h3>
-                        <Badge variant={getStatusVariant(brief.status)}>
-                          {brief.status}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-2">
-                        {brief.job.title}
-                      </p>
+                <Card
+                  key={brief.briefId}
+                  className="hover:shadow-modern transition-all duration-300 hover:scale-[1.02] bg-card/50 backdrop-blur-sm border-primary/10 hover:border-primary/30"
+                >
+                  <CardContent className="p-5">
+                    <div className="flex justify-between items-start mb-2">
+                      <Link
+                        to={`/briefs/${brief.briefId}`}
+                        className="font-medium hover:text-primary"
+                      >
+                        {brief.candidate.name}
+                      </Link>
+                      <Badge variant={getStatusVariant(brief.status)}>
+                        {brief.status}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {brief.job.title}
+                    </p>
+                    <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">
                         Created {formatDate(brief.createdAt)}
                       </p>
-                    </CardContent>
-                  </Card>
-                </Link>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDelete(brief.briefId)}
+                        disabled={deletingId === brief.briefId}
+                      >
+                        {deletingId === brief.briefId ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           </CardContent>

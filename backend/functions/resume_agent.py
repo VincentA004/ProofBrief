@@ -84,58 +84,116 @@ def generate_final_brief(
     ## RESUME (OCR text)
     {resume_text}
 
-    ## PUBLIC ARTIFACTS (links + meta)
+    ## PUBLIC ARTIFACTS (GitHub Repos, Links, etc.)
     {json.dumps(artifacts, indent=2)}
 
     ## OBJECTIVE HEURISTICS
     {json.dumps(heuristics, indent=2)}
 
-    ## SELECTED GITHUB CODE (snippets + file names)
+    ## SELECTED GITHUB CODE (Snippets + File Names)
     {code_section}
 
+    ---
     ## EVIDENCE HIERARCHY & RULES (READ CAREFULLY)
-    1) **Prefer README-derived technology lists** for each repo as the primary source of what technologies were used.
-    2) Treat **package manifests** (e.g., requirements.txt, pyproject.toml, package.json, poetry.lock) and **build files** as strong confirmation signals.
-    3) Treat **code snippets** as supporting evidence, but DO NOT assume the entire project uses a technology just because one small snippet shows it.
-    4) The **resume text** can confirm technologies claimed by the candidate; use it to cross-check repo claims.
-    5) The job description is for relevance only; DO NOT infer the candidate used a technology just because the JD lists it.
+    1) GitHub is the primary source of truth. Evidence from READMEs, package manifests, and code are the strongest signals.
+    2) Detailed project or work experience descriptions in the resume are strong supporting evidence.
+    3) A technology listed ONLY in a generic 'Skills' section is considered ZERO-EVIDENCE for scoring.
 
-    STRICT VERIFICATION POLICY
-    - Make a technology claim ONLY if it is explicitly supported by: (a) README tech list, OR (b) a manifest/build file, OR (c) a code snippet, OR (d) the resume text.
-    - If README lists a tech, you may assert it is used even if no code snippet is shown here.
-    - If evidence is conflicting or insufficient, write: "Not found in provided data" or "Uncertain: insufficient evidence".
-    - Every item in "evidence_highlights" MUST include an "evidence_url" that points to a concrete artifact (repo, file, PR, etc.) and a brief justification referencing README/manifest/snippet/resume.
-    - DO NOT add technologies that are not present in README/manifest/snippets/resume text.
+    ---
+    ## SCORING RUBRIC (ULTRA-STRICT) — TOTAL 100 POINTS
 
+    **GUIDING PRINCIPLE: The final score MUST be a direct reflection of demonstrated, verifiable depth. Unsubstantiated claims MUST result in a catastrophically low score.**
+
+    Let:
+    - REQUIRED = set of must-have skills/techs stated in the JD.
+    - EVIDENCED = set of techs proven by GitHub OR within detailed resume project/work descriptions.
+    - CLAIMED_ONLY = set of techs listed ONLY in a generic 'Skills' section.
+
+    1) Core Requirement Coverage (30 pts)
+    Score_H = 30 * ((# of REQUIRED ∩ EVIDENCED) / max(1, # of REQUIRED))
+
+    2) Depth & Complexity (40 pts)
+    - 1.0: Deep, complex application in GitHub repos with substantial code.
+    - 0.7: Clear application in at least one significant project with code on GitHub.
+    - 0.4: Tech mentioned in a detailed resume project, but GitHub evidence is sparse or academic.
+    - 0.1: Simplistic projects from coursework; minimal code evidence.
+    - 0.0: No verifiable project evidence exists.
+    Score_D = 40 * depth_level
+
+    3) Evidence Strength / Traceability (15 pts)
+    - 1.0: Backed by GitHub README, manifest, AND code.
+    - 0.4: Single source only (e.g., only a resume description).
+    - 0.0: No verifiable evidence.
+    Score_E = 15 * evidence_level
+
+    4) Recency & Relevance (5 pts)
+    - 1.0: Relevant work ≤18 months old.
+    - 0.5: 19-36 months.
+    - 0.0: >36 months or unclear.
+    Score_R = 5 * recency_level
+
+    5) Outcomes / Impact (5 pts)
+    - 1.0: Quantified outcomes (e.g., latency ↓35%).
+    - 0.5: Clear qualitative outcomes.
+    - 0.0: No outcomes.
+    Score_O = 5 * outcomes_level
+
+    6) Preferred / Bonus Alignment (up to +5 pts)
+    Score_B = 0 # Add points for PREFERRED skills if EVIDENCED
+
+    7) Penalties (subtract)
+    -20: Flat penalty if any `REQUIRED` skill is in `CLAIMED_ONLY`.
+    Penalties P = sum of applied negatives
+
+    ## FINAL SCORE ADJUDICATION (Simplified Logic)
+    # First, calculate a Base Score using simple addition/subtraction.
+    Base_Score = Score_H + Score_D + Score_E + Score_R + Score_O + Score_B + P
+    #
+    # Next, apply the highest-priority cap that is met. These are non-negotiable limits.
+    # The final score CANNOT exceed these caps.
+
+    1.  **Zero-Evidence Cap:** If the `depth_level` is 0.0 or the candidate has a penalty for unproven REQUIRED skills, the FINAL score is capped at a maximum of **29**. This is an automatic failure.
+    2.  **Low-Depth Cap:** If the `depth_level` is 0.1, the FINAL score is capped at a maximum of **49**.
+    3.  **Medium-Depth Cap:** If the `depth_level` is 0.4, the FINAL score is capped at a maximum of **69**.
+    4.  **High-Depth Default:** If none of the caps above are met, the FINAL score is the `Base Score`.
+
+    FINAL = The lowest applicable score after checking all caps. Clamp between 0 and 100.
+
+
+    ---
+    ## SCORING STEPS (FOLLOW EXACTLY)
+    1) Extract REQUIRED and PREFERRED from JD.
+    2) Build EVIDENCED and CLAIMED_ONLY sets.
+    3) Compute ALL sub-scores and Penalties.
+    4) Calculate the Base_Score using simple addition.
+    5) Determine the FINAL score by applying the hard caps from the Adjudication section.
+    6) Populate the JSON output. Do not include notes or formulas in the final JSON.
+
+    ---
     ### OUTPUT JSON SHAPE
     {{
-    "summary": [
-        "3 short bullets on role fit, grounded in README/manifest/snippet/resume evidence"
-    ],
-    "evidence_highlights": [
+      "summary": [
+        "3 short bullets on role fit, grounded in verifiable GitHub/resume evidence."
+      ],
+      "evidence_highlights": [
         {{
-        "claim": "what the candidate did / can do (grounded in README/manifest/snippet/resume)",
-        "evidence_url": "link to repo/file/pr/etc.",
-        "justification": "why this matters for the JD; cite which source (README / manifest / snippet / resume)"
+          "claim": "what the candidate did / can do (grounded in README/manifest/snippet/resume)",
+          "evidence_url": "link to repo/file/pr/etc. or 'resume project description'",
+          "justification": "why this matters for the JD; cite GitHub source or resume project."
         }}
-    ],
-    "risk_flags": [
-        "1-3 thoughtful risks; if a tech or outcome isn't evidenced in the sources, call it out"
-    ],
-    "screening_questions": [
-        "4 tailored questions that probe for signal based on JD and evidenced technologies"
-    ],
-    "final_score": [
-        "1-100 score based on the evidence and the JD"
-    ]
+      ],
+      "risk_flags": [
+        "1-3 thoughtful risks; call out any required skills that are claimed but not evidenced in projects or GitHub."
+      ],
+      "screening_questions": [
+        "4 tailored questions that probe for signal based on JD and evidenced technologies."
+      ],
+      "final_score": "integer 0-100"
     }}
-
-    OUTPUT REQUIREMENTS
-    - Be concise and factual; do not guess.
-    - Cite sources (README/manifest/snippet/resume) in each justification where relevant.
-    - If data is missing, say so. Do not hallucinate.
-    - Output MUST be valid JSON and nothing else.
     """.strip()
+
+
+
 
 
     body = json.dumps({

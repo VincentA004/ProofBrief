@@ -1,6 +1,6 @@
 export type BriefListItem = {
   briefId: string;
-  status: 'PENDING' | 'DONE';
+  status: 'PENDING' | 'DONE' | 'ERROR';
   candidate: { id: string; name: string };
   job: { id: string; title: string };
   createdAt?: string | null;
@@ -8,7 +8,7 @@ export type BriefListItem = {
 
 export type BriefDetail = {
   briefId: string;
-  status: 'PENDING' | 'DONE';
+  status: 'PENDING' | 'DONE' | 'ERROR';
   candidate: { id: string; name: string };
   job: { id: string; title: string };
   final?: { key: string; url: string };
