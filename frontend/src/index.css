@@ -1,0 +1,401 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 262 83% 58%;
+
+    --radius: 0.75rem;
+
+    /* Purple gradient system */
+    --gradient-primary: linear-gradient(135deg, hsl(262, 83%, 58%), hsl(262, 83%, 68%));
+    --gradient-subtle: linear-gradient(135deg, hsl(262, 83%, 97%), hsl(240, 4.8%, 95.9%));
+    --gradient-dark: linear-gradient(135deg, hsl(262, 83%, 48%), hsl(262, 83%, 38%));
+    
+    /* Modern shadows with purple tint */
+    --shadow-sm: 0 1px 2px 0 hsl(262, 83%, 58%, 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(262, 83%, 58%, 0.1), 0 2px 4px -1px hsl(262, 83%, 58%, 0.06);
+    --shadow-lg: 0 10px 15px -3px hsl(262, 83%, 58%, 0.1), 0 4px 6px -2px hsl(262, 83%, 58%, 0.05);
+    --shadow-xl: 0 20px 25px -5px hsl(262, 83%, 58%, 0.1), 0 10px 10px -5px hsl(262, 83%, 58%, 0.04);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 262 83% 58%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 262 83% 58%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 240 10% 3.9%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 262 83% 58%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(262, 83%, 58%), hsl(262, 83%, 68%));
+    --gradient-subtle: linear-gradient(135deg, hsl(240, 3.7%, 15.9%), hsl(240, 10%, 3.9%));
+    --gradient-dark: linear-gradient(135deg, hsl(262, 83%, 48%), hsl(262, 83%, 38%));
+
+    --shadow-sm: 0 1px 2px 0 hsl(0, 0%, 0%, 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(0, 0%, 0%, 0.1), 0 2px 4px -1px hsl(0, 0%, 0%, 0.06);
+    --shadow-lg: 0 10px 15px -3px hsl(0, 0%, 0%, 0.1), 0 4px 6px -2px hsl(0, 0%, 0%, 0.05);
+    --shadow-xl: 0 20px 25px -5px hsl(0, 0%, 0%, 0.1), 0 10px 10px -5px hsl(0, 0%, 0%, 0.04);
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 262 83% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 262 83% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    background: linear-gradient(135deg, hsl(var(--background)), hsl(var(--muted)));
+    min-height: 100vh;
+  }
+
+  /* Modern glassmorphism effects */
+  .glass-card {
+    @apply backdrop-blur-md bg-white/10 border border-white/20;
+  }
+
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .gradient-subtle {
+    background: var(--gradient-subtle);
+  }
+
+  /* Enhanced shadows */
+  .shadow-modern {
+    box-shadow: var(--shadow-lg);
+  }
+
+  .shadow-modern-xl {
+    box-shadow: var(--shadow-xl);
+  }
+
+  /* Polished SaaS Login Page - Subtle with Purple Accents */
+  [data-amplify-authenticator] {
+    @apply min-h-screen flex items-center justify-center p-4 relative !important;
+    background: 
+      radial-gradient(circle at 85% 15%, hsl(var(--primary)/6) 0%, transparent 50%),
+      radial-gradient(circle at 15% 85%, hsl(var(--accent)/4) 0%, transparent 50%),
+      linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--muted)/20) 100%) !important;
+  }
+
+  /* Subtle floating accent elements */
+  [data-amplify-authenticator]::before {
+    content: '' !important;
+    position: absolute !important;
+    top: 20% !important;
+    right: 15% !important;
+    width: 200px !important;
+    height: 200px !important;
+    background: linear-gradient(45deg, hsl(var(--primary)/3), hsl(var(--accent)/3)) !important;
+    border-radius: 50% !important;
+    filter: blur(60px) !important;
+    animation: pulse 6s ease-in-out infinite !important;
+    z-index: 0 !important;
+  }
+
+  [data-amplify-authenticator]::after {
+    content: '' !important;
+    position: absolute !important;
+    bottom: 20% !important;
+    left: 10% !important;
+    width: 150px !important;
+    height: 150px !important;
+    background: linear-gradient(135deg, hsl(var(--accent)/4), hsl(var(--primary)/2)) !important;
+    border-radius: 50% !important;
+    filter: blur(40px) !important;
+    animation: float 8s ease-in-out infinite !important;
+    z-index: 0 !important;
+  }
+
+  [data-amplify-authenticator] [data-amplify-container] {
+    @apply w-full max-w-md mx-auto p-8 rounded-2xl border relative z-10 !important;
+    background: hsl(var(--card)/95) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid hsl(var(--border)/60) !important;
+    box-shadow: 
+      0 20px 25px -5px hsl(var(--foreground)/8),
+      0 10px 10px -5px hsl(var(--foreground)/4),
+      0 0 0 1px hsl(var(--primary)/10) !important;
+    animation: slideInUp 0.6s ease-out !important;
+    margin-top: 60px !important;
+  }
+
+  /* ProofBrief logo positioned above the form */
+  [data-amplify-authenticator] [data-amplify-container]::before {
+    content: '' !important;
+    position: absolute !important;
+    top: -40px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    width: 64px !important;
+    height: 64px !important;
+    background: var(--gradient-primary) !important;
+    border-radius: 16px !important;
+    box-shadow: 
+      0 10px 25px hsl(var(--primary)/25),
+      0 0 0 4px hsl(var(--background)),
+      0 0 0 6px hsl(var(--primary)/20) !important;
+    z-index: 20 !important;
+  }
+
+  [data-amplify-authenticator] [data-amplify-container]::after {
+    content: 'PB' !important;
+    position: absolute !important;
+    top: -22px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    color: white !important;
+    font-weight: bold !important;
+    font-size: 18px !important;
+    z-index: 21 !important;
+    pointer-events: none !important;
+  }
+
+  /* Subtle brand header */
+  [data-amplify-authenticator] .amplify-heading,
+  [data-amplify-authenticator] h1,
+  [data-amplify-authenticator] h2 {
+    @apply text-2xl font-bold text-center mb-2 mt-6 !important;
+    color: hsl(var(--foreground)) !important;
+    letter-spacing: -0.025em !important;
+  }
+
+  /* Add welcome subtitle */
+  [data-amplify-authenticator] .amplify-heading::after,
+  [data-amplify-authenticator] h1::after,
+  [data-amplify-authenticator] h2::after {
+    content: 'Welcome to ProofBrief' !important;
+    display: block !important;
+    font-size: 14px !important;
+    font-weight: normal !important;
+    color: hsl(var(--muted-foreground)) !important;
+    margin-top: 4px !important;
+    margin-bottom: 24px !important;
+  }
+
+  /* Premium button with purple accent */
+  [data-amplify-authenticator] .amplify-button--primary,
+  [data-amplify-authenticator] button[data-amplify-button-primary],
+  [data-amplify-authenticator] [type="submit"] {
+    @apply w-full py-3.5 px-6 rounded-xl font-semibold text-white border-0 transition-all duration-300 relative overflow-hidden !important;
+    background: var(--gradient-primary) !important;
+    box-shadow: 
+      0 4px 14px hsl(var(--primary)/25),
+      inset 0 1px 0 hsl(var(--primary-foreground)/20) !important;
+    font-size: 15px !important;
+  }
+
+  [data-amplify-authenticator] .amplify-button--primary:hover,
+  [data-amplify-authenticator] button[data-amplify-button-primary]:hover,
+  [data-amplify-authenticator] [type="submit"]:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 
+      0 8px 25px hsl(var(--primary)/30),
+      0 0 0 1px hsl(var(--primary)/20),
+      inset 0 1px 0 hsl(var(--primary-foreground)/30) !important;
+  }
+
+  /* Shimmer effect on hover */
+  [data-amplify-authenticator] .amplify-button--primary::before {
+    content: '' !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: -100% !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent) !important;
+    transition: left 0.6s !important;
+  }
+
+  [data-amplify-authenticator] .amplify-button--primary:hover::before {
+    left: 100% !important;
+  }
+
+  /* Clean input styling */
+  [data-amplify-authenticator] .amplify-input,
+  [data-amplify-authenticator] input {
+    @apply w-full px-4 py-3.5 rounded-lg border transition-all duration-200 !important;
+    background: hsl(var(--background)) !important;
+    border: 1.5px solid hsl(var(--border)) !important;
+    font-size: 15px !important;
+    box-shadow: 0 1px 2px hsl(var(--foreground)/5) !important;
+  }
+
+  [data-amplify-authenticator] .amplify-input:focus,
+  [data-amplify-authenticator] input:focus {
+    @apply outline-none !important;
+    border-color: hsl(var(--primary)) !important;
+    box-shadow: 
+      0 0 0 3px hsl(var(--primary)/12),
+      0 1px 3px hsl(var(--foreground)/10) !important;
+  }
+
+  [data-amplify-authenticator] .amplify-label,
+  [data-amplify-authenticator] label {
+    @apply text-foreground font-medium mb-2 block text-sm !important;
+    letter-spacing: 0.01em !important;
+  }
+
+  [data-amplify-authenticator] .amplify-fieldset,
+  [data-amplify-authenticator] fieldset {
+    @apply space-y-5 border-0 p-0 !important;
+  }
+
+  /* Clean tab styling with purple accent */
+  [data-amplify-authenticator] [role="tablist"] {
+    @apply flex bg-muted/50 rounded-lg p-1 mb-6 !important;
+    backdrop-filter: blur(10px) !important;
+  }
+
+  [data-amplify-authenticator] [role="tablist"] [role="tab"] {
+    @apply flex-1 px-4 py-2.5 rounded-md transition-all duration-200 font-medium text-sm !important;
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  [data-amplify-authenticator] [role="tablist"] [role="tab"][aria-selected="true"] {
+    background: var(--gradient-primary) !important;
+    color: white !important;
+    box-shadow: 0 2px 8px hsl(var(--primary)/20) !important;
+  }
+
+  [data-amplify-authenticator] .amplify-button--link,
+  [data-amplify-authenticator] button[data-amplify-button-link] {
+    @apply text-primary hover:text-accent transition-all duration-200 font-medium text-sm !important;
+    text-decoration: none !important;
+  }
+
+  [data-amplify-authenticator] .amplify-button--link:hover {
+    text-decoration: underline !important;
+  }
+
+  [data-amplify-authenticator] .amplify-alert {
+    @apply rounded-lg p-3.5 mb-4 border !important;
+    background: hsl(var(--destructive)/8) !important;
+    border-color: hsl(var(--destructive)/25) !important;
+    color: hsl(var(--destructive)) !important;
+  }
+
+  /* Loading spinner */
+  [data-amplify-authenticator] .amplify-loader {
+    border: 2px solid hsl(var(--primary)/20) !important;
+    border-top-color: hsl(var(--primary)) !important;
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  /* Refined animations */
+  @keyframes float {
+    0%, 100% { transform: translateY(0px) rotate(0deg); opacity: 0.6; }
+    50% { transform: translateY(-10px) rotate(2deg); opacity: 0.8; }
+  }
+
+  @keyframes slideInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.02); }
+  }
+
+  /* Smooth animations */
+  * {
+    @apply transition-colors duration-200;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted/30;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/30 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary/50;
+  }
+}
