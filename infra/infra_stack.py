@@ -50,8 +50,9 @@ class ProofbriefStack(Stack):
         bucket.add_cors_rule(
             allowed_methods=[s3.HttpMethods.GET, s3.HttpMethods.PUT],
             allowed_origins=[
-                "http://localhost:3000",
-                "http://localhost:5173",
+                "https://main.d15bkn0oauvnds.amplifyapp.com",
+                "https://www.proofbrief.com",
+                "https://proofbrief.com",
                 "http://localhost:8080",
             ],
             allowed_headers=["*"],
