@@ -16,6 +16,7 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
     aws_apigateway as apigw,
+    aws_cognito as cognito,
 )
 from constructs import Construct
 import os
@@ -25,7 +26,7 @@ class ProofbriefStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # --- 1. VPC ---
+        # --- 1) VPC ---
         vpc = ec2.Vpc(
             self,
             "ProofBriefVPC",
@@ -38,7 +39,7 @@ class ProofbriefStack(Stack):
             ],
         )
 
-        # --- 2. S3 + SQS ---
+        # --- 2) S3 + optional DLQ (SQS kept for future) ---
         bucket = s3.Bucket(
             self,
             "ProofBriefBucket",
@@ -55,12 +56,12 @@ class ProofbriefStack(Stack):
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=dlq),
         )
 
-        # --- 3. Security Groups (for future VPC lambdas if needed) ---
+        # --- 3) Security Groups (DB <-> Lambdas) ---
         lambda_sg = ec2.SecurityGroup(self, "LambdaSecurityGroup", vpc=vpc)
         db_sg = ec2.SecurityGroup(self, "DatabaseSecurityGroup", vpc=vpc)
         db_sg.add_ingress_rule(peer=lambda_sg, connection=ec2.Port.tcp(5432))
 
-        # --- 4. Aurora Serverless v2 (with Data API) ---
+        # --- 4) Aurora Serverless v2 (Data API enabled) ---
         db_cluster = rds.DatabaseCluster(
             self,
             "Database",
@@ -76,17 +77,17 @@ class ProofbriefStack(Stack):
             enable_data_api=True,
         )
 
-            # --- 5. Lambda common config ---
+        # --- 5) Common Lambda env ---
         lambda_env = {
             "S3_BUCKET_NAME": bucket.bucket_name,
             "DB_CLUSTER_ARN": db_cluster.cluster_arn,
             "DB_SECRET_ARN": db_cluster.secret.secret_arn,
             "DB_NAME": os.environ.get("DB_NAME", "postgres"),
             "BEDROCK_MODEL_ID": os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"),
-            "GITHUB_SECRET_ARN": os.environ.get("GITHUB_SECRET_ARN", ""),
+            "GITHUB_SECRET_ARN": os.environ.get("GITHUB_SECRET_ARN", ""),  # optional
         }
 
-        # Shared layer with third-party deps (install into ./layer/python; see steps below)
+        # Shared layer for third-party deps (place built deps in ./layer/python)
         deps_layer = _lambda.LayerVersion(
             self, "DepsLayer",
             code=_lambda.Code.from_asset("layer"),
@@ -95,15 +96,17 @@ class ProofbriefStack(Stack):
         )
 
         common_kwargs = dict(
-            entry="../backend",            # bundles backend/ (functions/, shared/)
+            entry="../backend",                      # bundles backend/ (functions/, shared/)
             runtime=_lambda.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(300),
             memory_size=1024,
             environment=lambda_env,
             layers=[deps_layer],
+            security_groups=[lambda_sg],
+            vpc=vpc,
         )
 
-        # --- 6. Lambdas ---
+        # --- 6) Lambdas (pipeline) ---
         parse_lambda = lambda_python.PythonFunction(
             self, "ParseResumeFn",
             index="functions/parse_resume.py",
@@ -125,8 +128,15 @@ class ProofbriefStack(Stack):
             **common_kwargs,
         )
 
-        # --- 7. Permissions for Data API + Secrets + S3 + external services ---
-        for fn in [parse_lambda, process_lambda, resume_lambda, save_output_lambda]:
+        # --- 7) API Lambda (handles /briefs endpoints) ---
+        api_lambda = lambda_python.PythonFunction(
+            self, "ApiHandlerFn",
+            index="functions/api.py",  # you provide this file; uses Lambda proxy to route methods/paths
+            **common_kwargs,
+        )
+
+        # --- 8) IAM perms for Lambdas ---
+        for fn in [parse_lambda, process_lambda, resume_lambda, save_output_lambda, api_lambda]:
             # Aurora Data API
             fn.add_to_role_policy(iam.PolicyStatement(
                 actions=[
@@ -138,12 +148,12 @@ class ProofbriefStack(Stack):
                 ],
                 resources=[db_cluster.cluster_arn],
             ))
-            # Read DB credentials
+            # Read DB secret
             fn.add_to_role_policy(iam.PolicyStatement(
                 actions=["secretsmanager:GetSecretValue"],
                 resources=[db_cluster.secret.secret_arn],
             ))
-            # S3 list/get/put inside the stack bucket
+            # S3 list/get/put inside bucket
             fn.add_to_role_policy(iam.PolicyStatement(
                 actions=["s3:ListBucket"],
                 resources=[bucket.bucket_arn],
@@ -152,33 +162,37 @@ class ProofbriefStack(Stack):
                 actions=["s3:GetObject", "s3:PutObject", "s3:HeadObject"],
                 resources=[f"{bucket.bucket_arn}/*"],
             ))
-            # Optional GitHub token secret (if provided via env)
+            # Optional GitHub secret (if env provided)
             if lambda_env["GITHUB_SECRET_ARN"]:
                 fn.add_to_role_policy(iam.PolicyStatement(
                     actions=["secretsmanager:GetSecretValue"],
                     resources=[lambda_env["GITHUB_SECRET_ARN"]],
                 ))
 
-        # Extra service-specific perms
         # Textract (parse_resume)
         parse_lambda.add_to_role_policy(iam.PolicyStatement(
             actions=["textract:StartDocumentTextDetection", "textract:GetDocumentTextDetection"],
-            resources=["*"],  # Textract doesn’t support resource-level perms for these; scope by condition if desired
+            resources=["*"],
         ))
         parse_lambda.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:GetBucketLocation"],
             resources=[bucket.bucket_arn],
         ))
 
-        # Bedrock (process_content: skill extraction; resume_agent: final brief)
+        # Bedrock (process_content + resume_agent)
         for fn in [process_lambda, resume_lambda]:
             fn.add_to_role_policy(iam.PolicyStatement(
                 actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-                resources=["*"],  # Bedrock model ARNs vary by region/account; widen then tighten later if you like
+                resources=["*"],
             ))
 
+        # API Lambda needs to be able to start executions + describe
+        api_lambda.add_to_role_policy(iam.PolicyStatement(
+            actions=["states:StartExecution", "states:DescribeExecution", "states:DescribeStateMachine"],
+            resources=["*"],  # you can scope to this SM ARN below if you like
+        ))
 
-        # --- 8. Step Functions: parse -> process -> resume -> save_output ---
+        # --- 9) Step Functions chain ---
         parse_task = tasks.LambdaInvoke(
             self,
             "ParseResumeTask",
@@ -206,7 +220,6 @@ class ProofbriefStack(Stack):
 
         chain = parse_task.next(process_task).next(resume_task).next(save_output_task)
 
-        # CloudWatch log group for state machine
         sm_log_group = logs.LogGroup(
             self,
             "StateMachineLogs",
@@ -225,56 +238,93 @@ class ProofbriefStack(Stack):
             ),
         )
 
-        # --- 9. API Gateway to trigger the pipeline ---
-        api = apigw.RestApi(self, "ProofBriefApi")
-        start_res = api.root.add_resource("start")
+        # Expose SM ARN to API Lambda via env (so it can StartExecution directly)
+        api_lambda.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
 
-        # Simple request: expects { "briefId": "<uuid>" }
-        start_integration = apigw.AwsIntegration(
-            service="states",
-            action="StartExecution",
-            integration_http_method="POST",
-            options=apigw.IntegrationOptions(
-                credentials_role=iam.Role(
-                    self,
-                    "ApiGatewayStatesRole",
-                    assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
-                    inline_policies={
-                        "AllowStartExecution": iam.PolicyDocument(
-                            statements=[
-                                iam.PolicyStatement(
-                                    actions=["states:StartExecution"],
-                                    resources=[state_machine.state_machine_arn],
-                                )
-                            ]
-                        )
-                    },
-                ),
-                request_templates={
-                    "application/json": (
-                        "{"
-                        f"\"stateMachineArn\": \"{state_machine.state_machine_arn}\","
-                        "\"input\": \"$util.escapeJavaScript($input.body)\""
-                        "}"
-                    )
-                },
-                integration_responses=[
-                    apigw.IntegrationResponse(status_code="200"),
-                ],
+        # --- 10) Cognito for API auth ---
+        user_pool = cognito.UserPool(
+            self, "ProofBriefUserPool",
+            self_sign_up_enabled=True,
+            sign_in_aliases=cognito.SignInAliases(email=True, username=False),
+            standard_attributes=cognito.StandardAttributes(
+                email=cognito.StandardAttribute(required=True, mutable=True),
+            ),
+            password_policy=cognito.PasswordPolicy(
+                min_length=8,
+                require_lowercase=True,
+                require_uppercase=True,
+                require_digits=True,
+                require_symbols=False,
+            ),
+            account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
+        )
+
+        user_pool_client = user_pool.add_client(
+            "ProofBriefWebClient",
+            generate_secret=False,
+            auth_flows=cognito.AuthFlow(
+                user_password=True,
+                user_srp=True,
+                admin_user_password=True,
+            ),
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True, implicit_code_grant=True),
+                callback_urls=["http://localhost:3000/"],
+                logout_urls=["http://localhost:3000/"],
             ),
         )
 
-        start_res.add_method(
-            "POST",
-            start_integration,
-            method_responses=[apigw.MethodResponse(status_code="200")],
+        # --- 11) API Gateway (Lambda proxy + Cognito authorizer) ---
+        api = apigw.RestApi(self, "ProofBriefApi")
+
+        authorizer = apigw.CognitoUserPoolsAuthorizer(
+            self, "ProofBriefAuthorizer",
+            cognito_user_pools=[user_pool],
         )
 
-        # --- 10. Outputs ---
+        # Resources
+        briefs = api.root.add_resource("briefs")
+        briefs.add_cors_preflight(
+            allow_origins=apigw.Cors.ALL_ORIGINS,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"],
+        )
+
+        brief_id = briefs.add_resource("{id}")
+        brief_id.add_cors_preflight(
+            allow_origins=apigw.Cors.ALL_ORIGINS,
+            allow_methods=["GET", "PUT", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"],
+        )
+
+        start_res = brief_id.add_resource("start")
+        start_res.add_cors_preflight(
+            allow_origins=apigw.Cors.ALL_ORIGINS,
+            allow_methods=["PUT", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"],
+        )
+
+        # Methods (all protected by Cognito)
+        for method, resource in [
+            ("POST", briefs),
+            ("GET", briefs),
+            ("GET", brief_id),
+            ("PUT", start_res),
+        ]:
+            resource.add_method(
+                method,
+                apigw.LambdaIntegration(api_lambda),  # Lambda proxy handler inspects path/method
+                authorization_type=apigw.AuthorizationType.COGNITO,
+                authorizer=authorizer,
+            )
+
+        # --- 12) Outputs ---
         CfnOutput(self, "S3BucketName", value=bucket.bucket_name)
         CfnOutput(self, "SQSQueueUrl", value=job_queue.queue_url)
         CfnOutput(self, "DatabaseClusterARN", value=db_cluster.cluster_arn)
         CfnOutput(self, "DatabaseSecretARN", value=db_cluster.secret.secret_arn)
         CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)
         CfnOutput(self, "ProofBriefApiEndpoint", value=api.url)
-        CfnOutput(self, "ApiUrl", value=f"{api.url}start")
+        CfnOutput(self, "ApiUrl", value=f"{api.url}briefs")
+        CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
+        CfnOutput(self, "UserPoolClientId", value=user_pool_client.user_pool_client_id)
