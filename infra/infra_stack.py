@@ -97,7 +97,7 @@ class ProofbriefStack(Stack):
         common_kwargs = dict(
             entry="../backend",            # bundles backend/ (functions/, shared/)
             runtime=_lambda.Runtime.PYTHON_3_12,
-            timeout=Duration.seconds(60),
+            timeout=Duration.seconds(300),
             memory_size=1024,
             environment=lambda_env,
             layers=[deps_layer],

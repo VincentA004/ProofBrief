@@ -19,19 +19,53 @@ def _get_text_from_event_or_s3(event: dict, field_base: str) -> str:
     raise ValueError(f"Missing {field_base} or {field_base}S3 in event")
 
 
+def _load_selected_repo_excerpts(event: dict, max_per_repo_chars: int = 8000, max_repos: int = 4) -> list[dict]:
+    """
+    Reads event['selectedRepoTextS3'] -> list of {"url": ..., "s3": {"bucket":..., "key":...}}
+    Returns list of {"url": ..., "excerpt": "..."}.
+    """
+    out = []
+    items = event.get("selectedRepoTextS3") or []
+    for item in items[:max_repos]:
+        try:
+            url = item.get("url")
+            s3p = item.get("s3") or {}
+            bucket = s3p.get("bucket")
+            key = s3p.get("key")
+            if not (url and bucket and key):
+                continue
+            text = s3_get_text(bucket, key)
+            if text and len(text) > max_per_repo_chars:
+                text = text[:max_per_repo_chars]
+            out.append({"url": url, "excerpt": text or ""})
+        except Exception as e:
+            log.warning("Failed to load repo excerpt: %s", e)
+    return out
+
+
 # --- Core Logic ---
 
 def generate_final_brief(
-    resume_text: str, jd_text: str, artifacts: list, heuristics: dict
+    resume_text: str,
+    jd_text: str,
+    artifacts: list,
+    heuristics: dict,
+    repo_excerpts: list[dict],
+    skill_map: dict,
 ) -> dict:
     """Construct a detailed prompt and call Bedrock for final analysis."""
     log.info("Constructing final prompt for synthesis agent.")
     bedrock = SESSION.client("bedrock-runtime")
 
+    # Build a compact repo excerpts section
+    repo_section_parts = []
+    for r in repo_excerpts:
+        repo_section_parts.append(f"- URL: {r.get('url')}\n{r.get('excerpt','')}\n")
+    repo_section = "\n\n".join(repo_section_parts) if repo_section_parts else "None"
+
     prompt = f"""
 You are an expert technical hiring manager providing a final, data-driven analysis of a candidate.
-Based on the comprehensive data provided below, generate a concise and factual candidate brief.
-Your entire response must be a single, valid JSON object.
+Return ONLY a single, valid JSON object as described below—no prose outside JSON.
 
 ## CONTEXT ##
 
@@ -41,18 +75,29 @@ Your entire response must be a single, valid JSON object.
 # Candidate's Resume Text:
 {resume_text}
 
-# Candidate's Scraped Public Artifacts:
+# Candidate's Scraped Public Artifacts (all):
 {json.dumps(artifacts, indent=2)}
+
+# Selected Repository Excerpts (subset chosen for relevance):
+{repo_section}
 
 # Objective Heuristic Scores:
 {json.dumps(heuristics, indent=2)}
 
-## INSTRUCTIONS ##
-Generate a JSON object with the following keys:
-- "summary": A 3-bullet point summary of the candidate's fit for the role.
-- "evidence_highlights": A list of 3-5 key pieces of evidence. Each item must be an object with keys "claim", "evidence_url", and "justification".
-- "risk_flags": A list of 1-3 potential risks or areas to probe in an interview.
-- "screening_questions": A list of 4 tailored, open-ended screening questions based on comparing the candidate's evidence to the job's requirements.
+# Skill Map (keywords to watch for; already derived from JD+resume context):
+{json.dumps(skill_map, indent=2)}
+
+## OUTPUT JSON SHAPE (exact keys) ##
+{{
+  "summary": ["...", "...", "..."],
+  "evidence_highlights": [
+    {{"claim": "...", "evidence_url": "...", "justification": "..."}}
+  ],
+  "risk_flags": ["...", "..."],
+  "screening_questions": ["...", "...", "...", "..."]
+}}
+
+Only return that JSON object.
 """.strip()
 
     body = json.dumps({
@@ -71,7 +116,6 @@ Generate a JSON object with the following keys:
         )
         payload = json.loads(resp["body"].read())
         text = (payload.get("content", [{}])[0] or {}).get("text", "")
-        # Try to parse JSON; strip code fences if present
         t = text.strip()
         if t.startswith("```"):
             import re as _re
@@ -97,11 +141,18 @@ def handler(event, context):
     resume_text = _get_text_from_event_or_s3(event, "resumeText")
     jd_text = _get_text_from_event_or_s3(event, "jdText")
 
+    repo_excerpts = _load_selected_repo_excerpts(event)
+    skill_map = event.get("skillMap", {}) or {}
+    heuristics = event.get("heuristicScores", {}) or {}
+    artifacts = event.get("scrapedArtifacts", []) or []
+
     llm_content = generate_final_brief(
         resume_text=resume_text,
         jd_text=jd_text,
-        artifacts=event.get("scrapedArtifacts", []),
-        heuristics=event.get("heuristicScores", {}),
+        artifacts=artifacts,
+        heuristics=heuristics,
+        repo_excerpts=repo_excerpts,
+        skill_map=skill_map,
     )
 
     return {
